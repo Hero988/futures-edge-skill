@@ -158,6 +158,36 @@ ALWAYS after determining action, also check:
   - NOTE: Backtest staleness check should trigger on weekends or evenings when there's time to run it, NOT during active trading hours.
 ```
 
+**Step 2b: Show today's remaining checklist BEFORE executing.** Always present a checklist of what's been done and what's left today:
+```
+## Today's Checklist ({day_name}, {date} — {current_time} {timezone})
+
+{check_or_x} Pre-market analysis          {done_time or "— not done yet"}
+{check_or_x} Start /loop monitors          {done_time or "— run at 1:30 PM London"}
+{check_or_x} Active trading session        {trade_count trades logged or "— CL peak: 2:00-3:30 PM London"}
+{check_or_x} Close all positions           {"— by 9:45 PM London (4:45 PM ET)"}
+{check_or_x} Post-session review           {done_time or "— after close"}
+{check_or_x} Weekly review (if Friday)     {done_time or "— Friday only"}
+{check_or_x} Backtest revalidation         {"CURRENT (X days old)" or "STALE — due for refresh"}
+{check_or_x} Info verification             {"CURRENT" or "— due Sunday"}
+
+→ NEXT ACTION: {what we're about to do now}
+```
+Use a checkmark for completed items and an X or dash for pending. Include the time each pending item should happen in the user's timezone.
+
+On weekends, show the weekend checklist instead:
+```
+## Weekend Checklist ({day_name}, {date})
+
+{check_or_x} Review yesterday's trades     {status}
+{check_or_x} Weekly performance review     {status}
+{check_or_x} Backtest revalidation         {"CURRENT (X days)" or "STALE — running now"}
+{check_or_x} Info verification             {status}
+{check_or_x} Study / education             {"optional"}
+
+→ NEXT ACTION: {what we're about to do now}
+```
+
 **Step 3: Execute the determined action automatically.** Do not ask — just do it. The user said "what do we do next" which means "figure it out and go."
 
 **Step 4: After completing the action, ALWAYS give the user a specific schedule for tomorrow/next session.** Include:
