@@ -1,0 +1,353 @@
+{
+  "topstep": {
+    "name": "Topstep",
+    "accounts": {
+      "50k": {
+        "profit_target": 3000,
+        "max_drawdown": 2000,
+        "daily_loss_limit": 1000,
+        "max_contracts": 5,
+        "max_micros": 50
+      },
+      "100k": {
+        "profit_target": 6000,
+        "max_drawdown": 3000,
+        "daily_loss_limit": 2000,
+        "max_contracts": 10,
+        "max_micros": 100
+      },
+      "150k": {
+        "profit_target": 9000,
+        "max_drawdown": 4500,
+        "daily_loss_limit": 3000,
+        "max_contracts": 15,
+        "max_micros": 150
+      }
+    },
+    "drawdown_type": "eod_trailing",
+    "drawdown_notes": "Trailing drawdown calculated at end of day. Locks once it reaches starting balance.",
+    "consistency_rule": {
+      "eval": null,
+      "funded": 0.40,
+      "description": "No single day can exceed 40% of total funded profits."
+    },
+    "close_by": "15:10 CT",
+    "overnight_allowed": false,
+    "news_blackout": false,
+    "news_blackout_minutes": null,
+    "payout_split": "90/10",
+    "payout_details": "90% to trader, 10% to firm. First payout after 5 trading days.",
+    "eval_time_limit_days": null,
+    "min_trading_days": 0,
+    "scaling_plan": true,
+    "scaling_notes": "Must maintain profitability to unlock larger position sizes.",
+    "prohibited_instruments": [],
+    "platform": "Topstep Platform / NinjaTrader / Quantower / TradingView",
+    "data_feed": "Rithmic / CQG",
+    "url": "https://www.topstep.com",
+    "last_verified": "2026-03-22"
+  },
+  "apex": {
+    "name": "Apex Trader Funding",
+    "accounts": {
+      "25k": {
+        "profit_target": 1500,
+        "max_drawdown": 1500,
+        "daily_loss_limit": null,
+        "max_contracts": 4,
+        "max_micros": 40
+      },
+      "50k": {
+        "profit_target": 3000,
+        "max_drawdown": 2500,
+        "daily_loss_limit": null,
+        "max_contracts": 10,
+        "max_micros": 100
+      },
+      "100k": {
+        "profit_target": 6000,
+        "max_drawdown": 3000,
+        "daily_loss_limit": null,
+        "max_contracts": 14,
+        "max_micros": 140
+      },
+      "150k": {
+        "profit_target": 9000,
+        "max_drawdown": 5000,
+        "daily_loss_limit": null,
+        "max_contracts": 17,
+        "max_micros": 170
+      }
+    },
+    "drawdown_type": ["intraday_trailing", "eod_trailing"],
+    "drawdown_notes": "Trader selects intraday trailing or EOD trailing at account creation. Intraday trails in real-time; EOD updates at session close.",
+    "consistency_rule": {
+      "eval": null,
+      "funded": 0.50,
+      "description": "PA (Performance Account) rule: no single day can exceed 50% of total profits."
+    },
+    "close_by": "16:59 ET",
+    "overnight_allowed": false,
+    "news_blackout": false,
+    "news_blackout_minutes": null,
+    "payout_split": "ladder",
+    "payout_details": "Ladder system: first $25k at 100%, then 90/10 split. Payout every 8 trading days after first payout.",
+    "eval_time_limit_days": 30,
+    "min_trading_days": 0,
+    "scaling_plan": false,
+    "scaling_notes": null,
+    "prohibited_instruments": [],
+    "platform": "NinjaTrader / Rithmic / Tradovate",
+    "data_feed": "Rithmic",
+    "url": "https://www.apextraderfunding.com",
+    "last_verified": "2026-03-22"
+  },
+  "bulenox": {
+    "name": "Bulenox",
+    "accounts": {
+      "25k": {
+        "profit_target": 1500,
+        "max_drawdown": 1500,
+        "daily_loss_limit": 500,
+        "max_contracts": 3,
+        "max_micros": 30
+      },
+      "50k": {
+        "profit_target": 3000,
+        "max_drawdown": 2500,
+        "daily_loss_limit": 1100,
+        "max_contracts": 6,
+        "max_micros": 60
+      },
+      "100k": {
+        "profit_target": 6000,
+        "max_drawdown": 3000,
+        "daily_loss_limit": 2200,
+        "max_contracts": 12,
+        "max_micros": 120
+      },
+      "150k": {
+        "profit_target": 9000,
+        "max_drawdown": 5000,
+        "daily_loss_limit": 3300,
+        "max_contracts": 15,
+        "max_micros": 150
+      },
+      "250k": {
+        "profit_target": 15000,
+        "max_drawdown": 6500,
+        "daily_loss_limit": 5500,
+        "max_contracts": 25,
+        "max_micros": 250
+      }
+    },
+    "drawdown_type": ["intraday_trailing", "eod_trailing"],
+    "drawdown_notes": "Trader selects drawdown type. EOD trailing requires scaling plan. Intraday trails in real-time.",
+    "consistency_rule": {
+      "eval": null,
+      "funded": 0.40,
+      "description": "No single day profit can exceed 40% of total funded account profits."
+    },
+    "close_by": "15:59 CST",
+    "overnight_allowed": false,
+    "news_blackout": false,
+    "news_blackout_minutes": null,
+    "payout_split": "90/10",
+    "payout_details": "90% to trader, 10% to firm after initial withdrawal threshold.",
+    "eval_time_limit_days": null,
+    "min_trading_days": 5,
+    "scaling_plan": true,
+    "scaling_notes": "Required for EOD drawdown accounts. Progressive position size unlocking based on account profit.",
+    "prohibited_instruments": [],
+    "platform": "NinjaTrader / Quantower / R|Trader",
+    "data_feed": "Rithmic",
+    "url": "https://www.bulenox.com",
+    "last_verified": "2026-03-22"
+  },
+  "mffu": {
+    "name": "My Funded Futures (MFFU)",
+    "accounts": {
+      "50k": {
+        "profit_target": {
+          "core": 3000,
+          "rapid": 2500,
+          "pro": 3000
+        },
+        "max_drawdown": {
+          "core": 1500,
+          "rapid": 2000,
+          "pro": 2500
+        },
+        "daily_loss_limit": null,
+        "max_contracts": {
+          "core": 4,
+          "rapid": 6,
+          "pro": 8
+        },
+        "max_micros": {
+          "core": 40,
+          "rapid": 60,
+          "pro": 80
+        }
+      },
+      "100k": {
+        "profit_target": {
+          "core": 6000,
+          "rapid": 5000,
+          "pro": 6000
+        },
+        "max_drawdown": {
+          "core": 3000,
+          "rapid": 4000,
+          "pro": 5000
+        },
+        "daily_loss_limit": null,
+        "max_contracts": {
+          "core": 8,
+          "rapid": 12,
+          "pro": 14
+        },
+        "max_micros": {
+          "core": 80,
+          "rapid": 120,
+          "pro": 140
+        }
+      },
+      "150k": {
+        "profit_target": {
+          "core": 9000,
+          "rapid": 7500,
+          "pro": 9000
+        },
+        "max_drawdown": {
+          "core": 4500,
+          "rapid": 6000,
+          "pro": 7500
+        },
+        "daily_loss_limit": null,
+        "max_contracts": {
+          "core": 12,
+          "rapid": 15,
+          "pro": 17
+        },
+        "max_micros": {
+          "core": 120,
+          "rapid": 150,
+          "pro": 170
+        }
+      }
+    },
+    "plans": {
+      "core": {
+        "drawdown_type": "eod_trailing",
+        "drawdown_percentage": 0.03,
+        "description": "3% EOD trailing drawdown. Conservative plan with slower unlock."
+      },
+      "rapid": {
+        "drawdown_type": "intraday_trailing",
+        "drawdown_percentage": 0.04,
+        "description": "4% intraday trailing drawdown. Faster unlock with real-time trailing."
+      },
+      "pro": {
+        "drawdown_type": "eod_trailing",
+        "drawdown_percentage": 0.05,
+        "description": "5% EOD trailing drawdown. Largest drawdown buffer and position sizes."
+      }
+    },
+    "drawdown_type": ["eod_trailing", "intraday_trailing"],
+    "drawdown_notes": "Drawdown type varies by plan. Core = 3% EOD trailing, Rapid = 4% intraday trailing, Pro = 5% EOD trailing.",
+    "consistency_rule": {
+      "eval": 0.50,
+      "funded": {
+        "core": 0.40,
+        "rapid": null,
+        "pro": null
+      },
+      "description": "Eval: no single day > 50% of profit target. Core funded: 40% consistency. Rapid/Pro funded: no consistency rule."
+    },
+    "close_by": null,
+    "close_by_notes": "No mandatory position close time. Positions can be held through close.",
+    "overnight_allowed": true,
+    "news_blackout": true,
+    "news_blackout_minutes": 2,
+    "news_blackout_notes": "Positions must be flat 2 minutes before and after major economic news releases.",
+    "payout_split": "80/20",
+    "payout_details": "80% to trader, 20% to firm. First payout after profit buffer is met.",
+    "eval_time_limit_days": null,
+    "min_trading_days": 2,
+    "scaling_plan": false,
+    "scaling_notes": null,
+    "prohibited_instruments": [],
+    "platform": "NinjaTrader / Tradovate / TradingView",
+    "data_feed": "Rithmic / CQG",
+    "url": "https://www.myfundedfutures.com",
+    "last_verified": "2026-03-22"
+  },
+  "tradeday": {
+    "name": "TradeDay",
+    "accounts": {
+      "50k": {
+        "profit_target": 3000,
+        "max_drawdown": {
+          "intraday": 2000,
+          "eod": 2000,
+          "static": 2500
+        },
+        "daily_loss_limit": null,
+        "max_contracts": 5,
+        "max_micros": 50
+      },
+      "100k": {
+        "profit_target": 6000,
+        "max_drawdown": {
+          "intraday": 3000,
+          "eod": 3000,
+          "static": 3500
+        },
+        "daily_loss_limit": null,
+        "max_contracts": 10,
+        "max_micros": 100
+      },
+      "150k": {
+        "profit_target": 9000,
+        "max_drawdown": {
+          "intraday": 4500,
+          "eod": 4500,
+          "static": 5000
+        },
+        "daily_loss_limit": null,
+        "max_contracts": 15,
+        "max_micros": 150
+      }
+    },
+    "drawdown_type": ["intraday_trailing", "eod_trailing", "static"],
+    "drawdown_notes": "Three drawdown options: intraday trailing (real-time), EOD trailing (end of session), and static (fixed floor, does not trail).",
+    "consistency_rule": {
+      "eval": 0.30,
+      "funded": null,
+      "description": "Eval: no single day can exceed 30% of profit target. No consistency rule once funded."
+    },
+    "close_by": "15:50 CT",
+    "overnight_allowed": false,
+    "news_blackout": true,
+    "news_blackout_minutes": 2,
+    "news_blackout_notes": "Auto-liquidation of positions 2 minutes before major scheduled news events.",
+    "payout_split": "90/10",
+    "payout_details": "90% to trader, 10% to firm. Weekly payout schedule available.",
+    "eval_time_limit_days": null,
+    "min_trading_days": 5,
+    "scaling_plan": false,
+    "scaling_notes": null,
+    "prohibited_instruments": [],
+    "platform": "Tradovate / NinjaTrader / TradingView",
+    "data_feed": "CQG / Rithmic",
+    "url": "https://www.tradeday.com",
+    "last_verified": "2026-03-22"
+  },
+  "_metadata": {
+    "version": "1.0.0",
+    "last_updated": "2026-03-22",
+    "notes": "All rules subject to change. Verify with prop firm directly before trading. Drawdown values are for evaluation accounts; funded accounts may differ.",
+    "verification_cadence": "monthly"
+  }
+}
