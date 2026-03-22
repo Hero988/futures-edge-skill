@@ -251,8 +251,8 @@ This runs every 15 minutes via `/loop`. It does EVERYTHING automatically — the
 2. **Close deadline check:**
    - Calculate time remaining until 9:45 PM London (4:45 PM ET)
    - If < 30 min remaining → "CLOSE WARNING: {minutes} minutes until Lucid close deadline. Close all positions."
-   - If past deadline → "SESSION OVER. All positions should be closed. Say '/futures-edge next' for post-session review."
-   - If past deadline, stop here — don't scan for new setups.
+   - If past deadline → "SESSION OVER. All positions should be closed. Type 'cancel the autopilot loop' to stop this loop, then run '/futures-edge next' for post-session review."
+   - If past deadline, stop here — don't scan for new setups. Just print the session-over message.
 
 3. **Kill switch check:**
    - Read today's trade logs from `${CLAUDE_SKILL_DIR}/diary/{today}/trades/`
