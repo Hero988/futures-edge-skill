@@ -779,6 +779,51 @@ def extract_trade_returns(stats):
     return []
 
 
+def extract_trade_log(stats):
+    """Extract full trade-by-trade log from backtesting.py stats as a list of dicts."""
+    try:
+        trades_df = stats.get("_trades")
+        if trades_df is None or not hasattr(trades_df, "__len__") or len(trades_df) == 0:
+            return []
+        records = []
+        for i, row in trades_df.iterrows():
+            trade = {
+                "trade_num": i + 1,
+                "direction": "LONG" if row.get("Size", 0) > 0 else "SHORT",
+                "size": abs(row.get("Size", 0)),
+                "entry_time": str(row.get("EntryTime", "")),
+                "exit_time": str(row.get("ExitTime", "")),
+                "entry_price": safe_float(row.get("EntryPrice")),
+                "exit_price": safe_float(row.get("ExitPrice")),
+                "pnl": safe_float(row.get("PnL")),
+                "return_pct": safe_float(row.get("ReturnPct")),
+                "duration": str(row.get("Duration", "")),
+            }
+            records.append(trade)
+        return records
+    except Exception:
+        return []
+
+
+def save_chart(bt, stats, output_dir, strategy_name, date_str):
+    """Save backtest chart as HTML using backtesting.py's built-in plotting."""
+    try:
+        chart_path = os.path.join(output_dir, f"{strategy_name}-{date_str}-chart.html")
+        bt.plot(
+            filename=chart_path,
+            plot_equity=True,
+            plot_trades=True,
+            plot_drawdown=True,
+            plot_return=True,
+            plot_pl=True,
+            open_browser=False,
+            superimpose=False,
+        )
+        return chart_path
+    except Exception as e:
+        return f"Chart generation failed: {e}"
+
+
 def format_stats(stats):
     """Convert backtesting.py stats to a clean dict."""
     key_metrics = {}
@@ -911,6 +956,40 @@ def main():
         stats = bt.run()
         output["full_results"] = format_stats(stats)
         trade_returns = extract_trade_returns(stats)
+
+        # --- Trade log (individual trades) ---
+        trade_log = extract_trade_log(stats)
+        output["trade_log"] = trade_log
+        output["trade_count"] = len(trade_log)
+
+        # Save trade log to CSV
+        try:
+            trades_df = stats.get("_trades")
+            if trades_df is not None and len(trades_df) > 0:
+                results_dir = os.path.join(os.path.dirname(args.config), "..", "results")
+                os.makedirs(results_dir, exist_ok=True)
+                strategy_name = config.get("name", "unnamed")
+                date_str = datetime.now().strftime("%Y-%m-%d")
+                csv_path = os.path.join(results_dir, f"{strategy_name}-{date_str}-trades.csv")
+                trades_df.to_csv(csv_path, index=True)
+                output["trade_log_csv"] = csv_path
+        except Exception as e:
+            output["trade_log_csv_error"] = str(e)
+
+        # --- Chart (HTML with equity curve, trades, drawdown) ---
+        try:
+            results_dir = os.path.join(os.path.dirname(args.config), "..", "results")
+            os.makedirs(results_dir, exist_ok=True)
+            strategy_name = config.get("name", "unnamed")
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            chart_result = save_chart(bt, stats, results_dir, strategy_name, date_str)
+            if chart_result and not chart_result.startswith("Chart generation"):
+                output["chart_html"] = chart_result
+            else:
+                output["chart_error"] = chart_result
+        except Exception as e:
+            output["chart_error"] = str(e)
+
     except Exception as e:
         output["error"] = f"Backtest execution error: {e}"
         print(json.dumps(output, indent=2, cls=SafeJSONEncoder))

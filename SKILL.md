@@ -66,13 +66,34 @@ has_weekly = any(glob.glob(f'{base}/{yyyy}/{mm}/week-*-review.md'))
 config = json.load(open(f'{base}/config.json'))
 fwd_tests = glob.glob(f'{base}/backtests/forward-tests/*-live.json')
 stats_exists = os.path.exists(f'{base}/stats/cumulative.json')
+# Check backtest freshness
+latest_backtest_date = None
+backtest_stale = True
+baseline_files = glob.glob(f'{base}/backtests/baselines/*.json')
+if baseline_files:
+    for bf in baseline_files:
+        try:
+            bd = json.load(open(bf))
+            bd_date = bd.get('baseline_date', '')
+            if bd_date and (latest_backtest_date is None or bd_date > latest_backtest_date):
+                latest_backtest_date = bd_date
+        except: pass
+    if latest_backtest_date:
+        days_since = (datetime.now() - datetime.strptime(latest_backtest_date, '%Y-%m-%d')).days
+        backtest_stale = days_since >= 14  # 2-week shelf life for intraday strategies
+    else:
+        backtest_stale = True
 print(json.dumps({
   'today': today, 'dow': dow, 'hour': hour,
   'has_premarket': has_premarket, 'trade_count': len(trade_files),
   'has_postsession': has_postsession,
   'has_yesterday_post': has_yesterday_post, 'has_yesterday_trades': has_yesterday_trades,
   'active_strategy': config.get('active_strategy', 'none'),
-  'forward_tests': len(fwd_tests), 'stats_exists': stats_exists
+  'forward_tests': len(fwd_tests), 'stats_exists': stats_exists,
+  'has_weekly': has_weekly,
+  'latest_backtest_date': latest_backtest_date,
+  'backtest_stale': backtest_stale,
+  'days_since_backtest': (datetime.now() - datetime.strptime(latest_backtest_date, '%Y-%m-%d')).days if latest_backtest_date else None
 }, indent=2))
 "
 ```
@@ -133,6 +154,8 @@ ALWAYS after determining action, also check:
   - Forward tests active? Mention health check status.
   - Any /loop commands that should be running? Suggest them.
   - Prop firm rules verification needed (>14 days stale)? Flag it.
+  - Backtest stale (>14 days old)? → "Backtest is {N} days old. Re-running full optimization to find the best current strategy." → Execute Backtest Workflow (full optimization mode).
+  - NOTE: Backtest staleness check should trigger on weekends or evenings when there's time to run it, NOT during active trading hours.
 ```
 
 **Step 3: Execute the determined action automatically.** Do not ask — just do it. The user said "what do we do next" which means "figure it out and go."
@@ -274,17 +297,40 @@ Follow this checklist for EVERY trade evaluation.
 
 ## Backtest Workflow
 
-1. Define strategy parameters with the user:
-   - Setup type, entry/stop/target rules, instrument, timeframe
-   - Load prop firm from config for simulation
-2. Save strategy config to `${CLAUDE_SKILL_DIR}/diary/backtests/strategies/{name}.json`
-3. Run: `python "${CLAUDE_SKILL_DIR}/scripts/backtest_strategy.py" --config "${CLAUDE_SKILL_DIR}/diary/backtests/strategies/{name}.json" --prop-firm {firm} --account-size {size}`
-4. Evaluate TWO gates:
-   - **Gate 1 — Profitability**: PF > 1.5, Sharpe > 1.0, WFE > 0.5, Monte Carlo 5th percentile profitable
-   - **Gate 2 — Prop Firm Viability**: eval pass rate > 70%, account blow rate < 20%, consistency pass
-5. Save report to `${CLAUDE_SKILL_DIR}/diary/backtests/results/{name}-{date}.md`
-6. If BOTH PASS → save baseline to `${CLAUDE_SKILL_DIR}/diary/backtests/baselines/{name}.json`
-7. Present with go/no-go recommendation. If Gate 2 fails, suggest specific adjustments.
+**IMPORTANT RULES:**
+- **NEVER delete old backtests.** Old results are kept for comparison. New backtests get today's date.
+- **Always run FULL optimization** — test multiple strategies and find the best, not just re-run one.
+- **Backtests produce 3 outputs**: JSON results, trade-by-trade CSV, and interactive HTML chart.
+- **Backtest shelf life: 14 days** for intraday strategies. After 14 days, results are considered stale.
+
+**When triggered by "backtest" or by smart-next-action detecting stale backtest:**
+
+1. Check existing baselines. Note what strategies were previously tested and their results.
+2. Run a **full optimization sweep** across multiple strategy variants:
+   - Test the current active strategy with fresh data
+   - Test 3-5 variants (different instruments: CL, ES, NQ, GC; different setups: EMA cross, RSI, MACD, VWAP)
+   - Test parameter variants of the best performer (different EMA periods, ATR multipliers, R targets)
+   - For each strategy, run with `--config-path diary/config.json` for TradingView credentials
+3. Each backtest now generates:
+   - **JSON output** with full metrics, trade log, IS/OOS split, walk-forward, Monte Carlo
+   - **Trade log CSV** at `diary/backtests/results/{name}-{date}-trades.csv`
+   - **Interactive HTML chart** at `diary/backtests/results/{name}-{date}-chart.html` (equity curve, trade markers, drawdown)
+4. Compare ALL results side-by-side. Rank by: OOS Profit Factor (most important), then Sharpe, then total return.
+5. **The winner** gets:
+   - Report saved to `diary/backtests/results/{name}-{date}.md`
+   - Baseline saved/updated at `diary/backtests/baselines/{name}.json` (with today's date)
+   - Config updated: `active_strategy` set to winner
+   - Forward test tracker created/reset
+   - Patterns and lessons updated with findings
+6. Present the full comparison table and the winner's HTML chart path to the user.
+7. Tell user: "Open {chart_path} in your browser to see the equity curve and individual trades."
+
+**When to re-backtest (detected automatically by Smart Next Action):**
+- Every 14 days (shelf life for intraday strategies)
+- When forward test turns RED (strategy degradation)
+- When weekly review shows win rate dropped 10%+ from baseline
+- On Sunday evenings (ideal time — markets closed, fresh week ahead)
+- When user explicitly requests it
 
 ## Forward Test Workflow
 
