@@ -201,10 +201,9 @@ On weekends, show the weekend checklist instead:
 
 **Tomorrow ({day_name}, {date}):**
 - {time_1} London → `/futures-edge next` — I'll run pre-market analysis (CL levels, overnight range, bias)
-- {time_2} London → Start these monitoring loops:
-    /loop 15m /futures-edge scan CL for EMA 9/21 crossover signals on 15m
-    /loop 5m /futures-edge check time vs 4:45 PM ET close deadline
-- {time_3} London → Active trading. Tell me: "long MCL at [price]" or "short MCL at [price]"
+- {time_2} London → Start the autopilot loop (one command, runs until session ends):
+    /loop 15m /futures-edge autopilot — scans CL, detects EMA crossovers, auto-evaluates setups, presents trade plans, checks close deadline
+- NOTE: The loop does EVERYTHING automatically. You just approve or reject the trade plans it presents. Say "done trading" to stop.
 - {time_4} London → `/futures-edge next` — I'll run post-session review
 - {time_5} London → `/futures-edge next` — evening: strategy health check
 
@@ -229,8 +228,9 @@ Adjust times based on the user's timezone from config.json. For London (Europe/L
 Evaluate the user's message and route to the correct workflow:
 
 1. **Smart Next**: mentions "what do we do next", "next", "what now", "what should I do", "go", "let's go" → Section: Smart Next Action
-2. **Pre-Market**: mentions "pre-market", "morning prep", "what's the plan", "daily analysis", before market open → Section: Pre-Market Workflow
-3. **Active Trading**: mentions a price level, "should I take this", "long/short at", "trade idea", "entry" → Section: Active Trading Workflow
+2. **Autopilot**: mentions "autopilot", "scan CL for EMA crossover", "auto scan", "monitor" → Section: Autopilot Workflow
+3. **Pre-Market**: mentions "pre-market", "morning prep", "what's the plan", "daily analysis", before market open → Section: Pre-Market Workflow
+4. **Active Trading**: mentions a price level, "should I take this", "long/short at", "trade idea", "entry" → Section: Active Trading Workflow
 4. **Post-Session**: mentions "done trading", "post-session", "how did I do", "end of day", "review today" → Section: Post-Session Workflow
 5. **Review**: mentions "weekly review", "monthly stats", "performance", "how am I doing overall" → Section: Review Workflow
 6. **Backtest**: mentions "backtest", "test this strategy", "validate", "does this work historically" → Section: Backtest Workflow
@@ -239,6 +239,80 @@ Evaluate the user's message and route to the correct workflow:
 9. **Verification**: mentions "verify", "are rules current", "check info", "update rules" → Section: Verification Workflow
 10. **Education**: asks about a concept (ICT, VWAP, order blocks, etc.) → Load relevant reference file
 11. **Default**: assess from context. If unclear, ask the user which mode they need.
+
+## Autopilot Workflow
+
+This runs every 15 minutes via `/loop`. It does EVERYTHING automatically — the user just watches and approves/rejects trade plans.
+
+**Every 15 minutes, execute this sequence:**
+
+1. Get current time: `python -c "from datetime import datetime; print(datetime.now().strftime('%H:%M %A'))"`
+
+2. **Close deadline check:**
+   - Calculate time remaining until 9:45 PM London (4:45 PM ET)
+   - If < 30 min remaining → "CLOSE WARNING: {minutes} minutes until Lucid close deadline. Close all positions."
+   - If past deadline → "SESSION OVER. All positions should be closed. Say '/futures-edge next' for post-session review."
+   - If past deadline, stop here — don't scan for new setups.
+
+3. **Kill switch check:**
+   - Read today's trade logs from `${CLAUDE_SKILL_DIR}/diary/{today}/trades/`
+   - If 3+ consecutive losses → "KILL SWITCH ACTIVE. No more trades today."
+   - If daily loss >= 2% → "DAILY LOSS LIMIT. No more trades today."
+   - If kill switch active, stop here — just report status.
+
+4. **Market scan:**
+   - Run: `python "${CLAUDE_SKILL_DIR}/scripts/market_scan.py" --symbols CL1! --intervals 15m 1h`
+   - Extract: current CL price, EMA10 (≈EMA9), EMA20 (≈EMA21), RSI, ATR, VWAP, recommendation
+
+5. **EMA crossover detection:**
+   - From the 15m scan: check if EMA10 and EMA20 have crossed
+   - **LONG signal**: EMA10 > EMA20 AND recommendation is BUY or STRONG_BUY
+   - **SHORT signal**: EMA10 < EMA20 AND recommendation is SELL or STRONG_SELL
+   - **NO signal**: EMA10 ≈ EMA20 (within 0.1%) or NEUTRAL → report "No crossover. EMA10={val} EMA20={val}. Waiting."
+
+6. **If signal detected → auto-evaluate the trade:**
+   - Load today's premarket.md for bias and levels
+   - Score 6-point confluence (same as Active Trading Workflow)
+   - Calculate position size using MCL tick value ($1/tick)
+   - Calculate stop (1x ATR from current price) and targets (1R, 2R)
+   - Run prop firm compliance check
+
+7. **Present the trade plan:**
+   ```
+   SIGNAL DETECTED: {LONG/SHORT} CL at ${price}
+
+   Confluence Score: {X}/6
+   - Session bias alignment: {+1 or +0}
+   - Key level: {+1 or +0}
+   - Multi-timeframe: {+1 or +0}
+   - Indicator confirmation: {+1 or +0}
+   - R:R >= 2:1: {+1 or +0}
+   - No news within 30min: {+1 or +0}
+
+   Decision: {TAKE IT / CONDITIONAL / PASS}
+
+   Trade Plan:
+   - Entry: ${price} | Stop: ${stop} ({ticks} ticks, ${risk}/contract)
+   - Contracts: {N} MCL | Risk: ${total_risk}
+   - T1 (1R): ${t1} — take 50% off | T2 (2R): ${t2} — take 25% off
+   - Prop firm: {compliant/warning}
+
+   ⚠ WAITING FOR YOUR APPROVAL. Reply "take it" to enter, or wait for next scan in 15 min.
+   ```
+
+8. **If no signal:** Report concise status:
+   ```
+   AUTOPILOT SCAN — {time}
+   CL: ${price} | EMA9: {val} EMA21: {val} | RSI: {val} | No crossover
+   Close deadline: {hours}h {min}m remaining
+   Trades today: {N} | Daily P&L: ${pnl}
+   ```
+
+**The user's only job during autopilot:**
+- Say "take it" or "yes" to approve a trade plan
+- Say "done trading" to end the session and trigger post-session review
+- Say "pass" or just wait 15 min if they don't like the setup
+- The loop handles everything else automatically
 
 ## Pre-Market Workflow
 
