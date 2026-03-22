@@ -160,7 +160,39 @@ ALWAYS after determining action, also check:
 
 **Step 3: Execute the determined action automatically.** Do not ask — just do it. The user said "what do we do next" which means "figure it out and go."
 
-**Step 4: After completing the action, tell the user what was done AND what the next action after this will be.** Example: "Pre-market analysis complete. Next: I'm ready to evaluate trades during the session. Say 'long CL at [price]' when you see a setup, or '/loop 15m monitor CL EMA crossover' to set up automated scanning."
+**Step 4: After completing the action, ALWAYS give the user a specific schedule for tomorrow/next session.** Include:
+- The EXACT time (in their timezone from config) they should come back
+- The EXACT command they should run
+- Any `/loop` commands they should start and when
+
+**REQUIRED: Next Steps Schedule Template** (always include after every completed action):
+```
+## Your Schedule
+
+**Tomorrow ({day_name}, {date}):**
+- {time_1} London → `/futures-edge next` — I'll run pre-market analysis (CL levels, overnight range, bias)
+- {time_2} London → Start these monitoring loops:
+    /loop 15m /futures-edge scan CL for EMA 9/21 crossover signals on 15m
+    /loop 5m /futures-edge check time vs 4:45 PM ET close deadline
+- {time_3} London → Active trading. Tell me: "long MCL at [price]" or "short MCL at [price]"
+- {time_4} London → `/futures-edge next` — I'll run post-session review
+- {time_5} London → `/futures-edge next` — evening: strategy health check
+
+**Specific times for your timezone ({timezone}):**
+- Pre-market: 7:00-8:00 AM London (before US pre-market opens)
+- CL peak session: 2:00-3:30 PM London (= 9:00-10:30 AM ET, CL highest volume)
+- Start /loop at: 1:30 PM London (= 8:30 AM ET, US market open)
+- Position close: 9:45 PM London (= 4:45 PM ET, Lucid close deadline)
+- Post-session: after 9:45 PM London
+```
+
+Adjust times based on the user's timezone from config.json. For London (Europe/London):
+- US pre-market: 1:00 PM London
+- US market open: 2:30 PM London
+- CL peak volume: 2:00-3:30 PM London (9:00-10:30 AM ET)
+- CL inventory report (Wednesday): 3:30 PM London (10:30 AM ET)
+- Lucid close deadline (4:45 PM ET): 9:45 PM London
+- US market close (4:00 PM ET): 9:00 PM London
 
 ## Mode Detection Decision Tree
 
