@@ -31,20 +31,129 @@ If it does NOT exist:
 
 If config EXISTS, load it and proceed to mode detection.
 
+## Getting Current Date and Time
+
+ALWAYS get the current date and time at the start of every interaction by running:
+```bash
+python -c "from datetime import datetime; now=datetime.now(); print(f'DATE={now.strftime(\"%Y-%m-%d\")} TIME={now.strftime(\"%H:%M\")} DOW={now.strftime(\"%A\")}')"
+```
+Store the result as TODAY_DATE, CURRENT_TIME, and DAY_OF_WEEK. Use these throughout all workflows. The user's timezone is in config.json.
+
+## Smart Next Action — "What do we do next?"
+
+When the user says "what do we do next", "next", "what now", "what should I do", or any variant, follow this decision tree. Run the date/time command first, then:
+
+**Step 1: Get current state** — run this check:
+```bash
+python -c "
+import os, json, glob
+from datetime import datetime, timedelta
+base = '${CLAUDE_SKILL_DIR}/diary'
+today = datetime.now().strftime('%Y-%m-%d')
+yyyy = datetime.now().strftime('%Y')
+mm = datetime.now().strftime('%m')
+day_dir = f'{base}/{yyyy}/{mm}/{today}'
+has_premarket = os.path.exists(f'{day_dir}/premarket.md')
+trade_files = glob.glob(f'{day_dir}/trades/trade-*.md') if os.path.exists(f'{day_dir}/trades') else []
+has_postsession = os.path.exists(f'{day_dir}/post-session.md')
+yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+yd = f'{base}/{(datetime.now()-timedelta(days=1)).strftime(\"%Y\")}/{(datetime.now()-timedelta(days=1)).strftime(\"%m\")}/{yesterday}'
+has_yesterday_post = os.path.exists(f'{yd}/post-session.md')
+has_yesterday_trades = len(glob.glob(f'{yd}/trades/trade-*.md')) > 0 if os.path.exists(f'{yd}/trades') else False
+dow = datetime.now().strftime('%A')
+hour = datetime.now().hour
+has_weekly = any(glob.glob(f'{base}/{yyyy}/{mm}/week-*-review.md'))
+config = json.load(open(f'{base}/config.json'))
+fwd_tests = glob.glob(f'{base}/backtests/forward-tests/*-live.json')
+stats_exists = os.path.exists(f'{base}/stats/cumulative.json')
+print(json.dumps({
+  'today': today, 'dow': dow, 'hour': hour,
+  'has_premarket': has_premarket, 'trade_count': len(trade_files),
+  'has_postsession': has_postsession,
+  'has_yesterday_post': has_yesterday_post, 'has_yesterday_trades': has_yesterday_trades,
+  'active_strategy': config.get('active_strategy', 'none'),
+  'forward_tests': len(fwd_tests), 'stats_exists': stats_exists
+}, indent=2))
+"
+```
+
+**Step 2: Apply the decision tree based on state + time:**
+
+```
+IF Saturday or Sunday:
+  IF has_yesterday_trades AND NOT has_yesterday_post:
+    → "You have unreviewed trades from yesterday. Running post-session review."
+    → Execute Post-Session Workflow for yesterday
+  ELIF dow == "Sunday":
+    → "Weekend — good time for a weekly review and info verification."
+    → Execute Review Workflow (weekly) + Verification Workflow
+  ELSE:
+    → "Markets closed. Options: review past performance, backtest strategies, study (education mode), or verify info is current."
+
+IF Monday-Friday AND hour < 8 (before 8 AM user local time):
+  → "Pre-market time. Let me run your morning analysis."
+  → Execute Pre-Market Workflow
+
+IF Monday-Friday AND 8 <= hour < 13 (8 AM - 1 PM user time = market hours for London trader):
+  IF NOT has_premarket:
+    → "Markets are open but you haven't done pre-market yet. Running it now."
+    → Execute Pre-Market Workflow
+  ELIF has_premarket AND trade_count == 0:
+    → "Pre-market done. Markets are open. I'm ready to evaluate trades."
+    → "Say 'long CL at [price]' or 'short CL at [price]' when you see a setup."
+    → ALSO recommend: "Want me to set up monitoring? I can run: /loop 15m scan CL for EMA crossover signals"
+  ELIF has_premarket AND trade_count > 0:
+    → "You have {N} trades logged. Markets still open. Ready for more trade evaluations."
+    → "Or say 'done trading' when you're finished for the day."
+
+IF Monday-Friday AND 13 <= hour < 17 (1 PM - 5 PM user time = after US market close for London):
+  IF trade_count > 0 AND NOT has_postsession:
+    → "Trading session is over. You have {N} trades to review. Running post-session."
+    → Execute Post-Session Workflow
+  ELIF trade_count == 0 AND has_premarket:
+    → "No trades today — that's okay if there were no setups. Running a quick end-of-day scan."
+    → Run market_scan.py and summarize what happened
+  ELIF has_postsession:
+    → "Post-session already done. You're all caught up for today."
+    → "Want to: review the week so far, backtest a new strategy, or study a concept?"
+
+IF Monday-Friday AND hour >= 17 (evening):
+  IF NOT has_postsession AND trade_count > 0:
+    → Execute Post-Session Workflow
+  ELIF dow == "Friday" AND NOT has_weekly_review:
+    → "End of the trading week. Running weekly performance review."
+    → Execute Review Workflow (weekly)
+  ELSE:
+    → "Evening session. Options: review performance, backtest, optimize strategies, or study."
+
+IF 1st of month:
+  → Include monthly review in next action
+
+ALWAYS after determining action, also check:
+  - Forward tests active? Mention health check status.
+  - Any /loop commands that should be running? Suggest them.
+  - Prop firm rules verification needed (>14 days stale)? Flag it.
+```
+
+**Step 3: Execute the determined action automatically.** Do not ask — just do it. The user said "what do we do next" which means "figure it out and go."
+
+**Step 4: After completing the action, tell the user what was done AND what the next action after this will be.** Example: "Pre-market analysis complete. Next: I'm ready to evaluate trades during the session. Say 'long CL at [price]' when you see a setup, or '/loop 15m monitor CL EMA crossover' to set up automated scanning."
+
 ## Mode Detection Decision Tree
 
 Evaluate the user's message and route to the correct workflow:
 
-1. **Pre-Market**: mentions "pre-market", "morning prep", "what's the plan", "daily analysis", before market open → Section: Pre-Market Workflow
-2. **Active Trading**: mentions a price level, "should I take this", "long/short at", "trade idea", "entry" → Section: Active Trading Workflow
-3. **Post-Session**: mentions "done trading", "post-session", "how did I do", "end of day", "review today" → Section: Post-Session Workflow
-4. **Review**: mentions "weekly review", "monthly stats", "performance", "how am I doing overall" → Section: Review Workflow
-5. **Backtest**: mentions "backtest", "test this strategy", "validate", "does this work historically" → Section: Backtest Workflow
-6. **Forward Test**: mentions "forward test", "paper trade", "compare to backtest", "strategy health" → Section: Forward Test Workflow
-7. **Automation**: mentions "automate", "schedule", "set up loop", "remind me" → Section: Automation Workflow
-8. **Verification**: mentions "verify", "are rules current", "check info", "update rules" → Section: Verification Workflow
-9. **Education**: asks about a concept (ICT, VWAP, order blocks, etc.) → Load relevant reference file
-10. **Default**: assess from context. If unclear, ask the user which mode they need.
+1. **Smart Next**: mentions "what do we do next", "next", "what now", "what should I do", "go", "let's go" → Section: Smart Next Action
+2. **Pre-Market**: mentions "pre-market", "morning prep", "what's the plan", "daily analysis", before market open → Section: Pre-Market Workflow
+3. **Active Trading**: mentions a price level, "should I take this", "long/short at", "trade idea", "entry" → Section: Active Trading Workflow
+4. **Post-Session**: mentions "done trading", "post-session", "how did I do", "end of day", "review today" → Section: Post-Session Workflow
+5. **Review**: mentions "weekly review", "monthly stats", "performance", "how am I doing overall" → Section: Review Workflow
+6. **Backtest**: mentions "backtest", "test this strategy", "validate", "does this work historically" → Section: Backtest Workflow
+7. **Forward Test**: mentions "forward test", "paper trade", "compare to backtest", "strategy health" → Section: Forward Test Workflow
+8. **Automation**: mentions "automate", "schedule", "set up loop", "remind me" → Section: Automation Workflow
+9. **Verification**: mentions "verify", "are rules current", "check info", "update rules" → Section: Verification Workflow
+10. **Education**: asks about a concept (ICT, VWAP, order blocks, etc.) → Load relevant reference file
+11. **Default**: assess from context. If unclear, ask the user which mode they need.
 
 ## Pre-Market Workflow
 
@@ -267,9 +376,53 @@ python "${CLAUDE_SKILL_DIR}/scripts/verify_info.py" --check all
 python "${CLAUDE_SKILL_DIR}/scripts/verify_info.py" --check prop-firms
 ```
 
-## Diary File Operations
+## Diary File Operations & Index
 
-Rules for reading and writing diary files:
+The diary is the skill's memory. Every file has a specific purpose and location. Here is the complete index:
+
+### Where to find things:
+```
+diary/
+├── config.json                          ← USER SETTINGS: prop firm, account, strategy, TV credentials
+├── lessons/
+│   ├── patterns.md                      ← WINNING PATTERNS: setups that work, with win rates and counts
+│   ├── mistakes.md                      ← RECURRING MISTAKES: errors to avoid, with frequency
+│   └── rules-evolution.md               ← RULE CHANGES: when and why personal rules changed
+├── stats/
+│   ├── cumulative.json                  ← OVERALL PERFORMANCE: lifetime metrics, updated after each post-session
+│   ├── by-setup.json                    ← SETUP BREAKDOWN: win rate per strategy/setup type
+│   ├── by-session.json                  ← TIME ANALYSIS: performance by session (London/NY/Asia)
+│   └── by-contract.json                ← INSTRUMENT ANALYSIS: performance by ES/NQ/CL/GC
+├── {YYYY}/{MM}/{YYYY-MM-DD}/
+│   ├── premarket.md                     ← DAILY PLAN: levels, bias, economic events, risk params
+│   ├── trades/
+│   │   ├── trade-001.md                 ← TRADE LOG: entry, exit, P&L, R, grade, emotions, prop check
+│   │   ├── trade-002.md
+│   │   └── ...
+│   ├── post-session.md                  ← DAILY REVIEW: grade, P&L summary, lessons, focus for tomorrow
+│   └── week-{NN}-review.md             ← WEEKLY REVIEW: aggregate stats, setup analysis, optimization
+├── monthly-{YYYY-MM}.md                ← MONTHLY REVIEW: equity curve, strategy health, rule evolution
+└── backtests/
+    ├── strategies/{name}.json           ← STRATEGY CONFIGS: parameters for backtesting
+    ├── results/{name}-{date}.md         ← BACKTEST REPORTS: full results with IS/OOS/MC/prop sim
+    ├── baselines/{name}.json            ← VALIDATED BASELINES: expected metrics for forward testing
+    ├── forward-tests/{name}-live.json   ← FORWARD TEST TRACKING: live trades vs baseline comparison
+    └── optimizations/{name}-{date}.md   ← OPTIMIZATION REPORTS: variant comparison when strategy degrades
+```
+
+### How to find the right file:
+- **Current settings** → `diary/config.json` (prop firm, account, active strategy, instruments)
+- **What to avoid today** → `diary/lessons/mistakes.md` (recent recurring errors)
+- **What's been working** → `diary/lessons/patterns.md` (winning setups with stats)
+- **Today's plan** → `diary/{YYYY}/{MM}/{today}/premarket.md`
+- **Today's trades** → `diary/{YYYY}/{MM}/{today}/trades/trade-*.md`
+- **Today's review** → `diary/{YYYY}/{MM}/{today}/post-session.md`
+- **Overall performance** → `diary/stats/cumulative.json`
+- **Best setup type** → `diary/stats/by-setup.json`
+- **Active strategy baseline** → `diary/backtests/baselines/{active_strategy}.json`
+- **Forward test health** → `diary/backtests/forward-tests/{strategy}-live.json`
+
+### Rules:
 1. Always use `${CLAUDE_SKILL_DIR}/diary/` as the base path
 2. Create directories as needed: `{YYYY}/{MM}/{YYYY-MM-DD}/trades/`
 3. Use ISO date format: YYYY-MM-DD
