@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 historical_data.py - Pull OHLCV data via tvDatafeed and compute key levels.
-Args: --symbol, --exchange, --interval, --bars.
+Args: --symbol, --exchange, --interval, --bars, --config-path.
+Reads TradingView credentials from config.json if available.
 Computes: PDH/PDL/PDC, weekly high/low, ATR(14), swing highs/lows, VWAP.
 Outputs JSON to stdout.
 """
@@ -10,6 +11,7 @@ import argparse
 import json
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 
 INTERVAL_MAP = {
@@ -21,6 +23,39 @@ INTERVAL_MAP = {
     "1d": "in_daily",
     "1w": "in_weekly",
 }
+
+# Exchange mapping for futures (tvDatafeed needs the correct exchange)
+EXCHANGE_MAP = {
+    "ES1!": "CME_MINI", "MES1!": "CME_MINI",
+    "NQ1!": "CME_MINI", "MNQ1!": "CME_MINI",
+    "YM1!": "CBOT_MINI", "MYM1!": "CBOT_MINI",
+    "RTY1!": "CME_MINI", "M2K1!": "CME_MINI",
+    "CL1!": "NYMEX", "MCL1!": "NYMEX",
+    "GC1!": "COMEX", "MGC1!": "COMEX",
+}
+
+
+def load_tv_credentials(config_path=None):
+    """Load TradingView credentials from config.json."""
+    paths_to_try = []
+    if config_path:
+        paths_to_try.append(Path(config_path))
+    # Default: ../diary/config.json relative to this script
+    paths_to_try.append(Path(__file__).resolve().parent.parent / "diary" / "config.json")
+
+    for p in paths_to_try:
+        try:
+            if p.exists():
+                with open(p, "r") as f:
+                    config = json.load(f)
+                username = config.get("tradingview_username")
+                password = config.get("tradingview_password")
+                if username and password:
+                    return username, password
+        except (json.JSONDecodeError, OSError):
+            continue
+
+    return None, None
 
 
 def get_tv_interval(interval_str):
@@ -179,6 +214,11 @@ def main():
         default=5,
         help="Bars on each side for swing detection (default: 5)",
     )
+    parser.add_argument(
+        "--config-path",
+        default=None,
+        help="Path to config.json for TradingView credentials (optional)",
+    )
     args = parser.parse_args()
 
     output = {
@@ -200,17 +240,46 @@ def main():
         print(json.dumps(output, indent=2))
         return
 
+    # Resolve exchange via mapping
+    effective_exchange = EXCHANGE_MAP.get(args.symbol, args.exchange)
+
     # Pull data
     try:
         from tvDatafeed import TvDatafeed, Interval
+        import time as _time
 
-        tv = TvDatafeed()  # no auth for delayed data
-        df = tv.get_hist(
-            symbol=args.symbol,
-            exchange=args.exchange,
-            interval=tv_interval,
-            n_bars=args.bars,
-        )
+        # Load TradingView credentials from config
+        tv_username, tv_password = load_tv_credentials(args.config_path)
+
+        # Retry logic: tvDatafeed websocket can fail on first attempt
+        tv = None
+        for _attempt in range(3):
+            try:
+                if tv_username and tv_password:
+                    tv = TvDatafeed(username=tv_username, password=tv_password)
+                else:
+                    tv = TvDatafeed()  # no auth for delayed data
+                _time.sleep(2)  # Let websocket stabilize
+                break
+            except Exception:
+                _time.sleep(3)
+
+        if tv is None:
+            output["error"] = "Failed to connect to TvDatafeed after 3 attempts."
+            print(json.dumps(output, indent=2))
+            return
+
+        df = None
+        for _retry in range(3):
+            df = tv.get_hist(
+                symbol=args.symbol,
+                exchange=effective_exchange,
+                interval=tv_interval,
+                n_bars=args.bars,
+            )
+            if df is not None and not df.empty:
+                break
+            _time.sleep(3)
 
         if df is None or df.empty:
             output["error"] = "No data returned from tvDatafeed. Symbol may be invalid or service unavailable."

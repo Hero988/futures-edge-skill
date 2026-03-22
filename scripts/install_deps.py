@@ -15,14 +15,31 @@ import importlib
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
 PACKAGES = [
-    {"import_name": "tradingview_ta", "pip_name": "tradingview-ta"},
+    {"import_name": "tradingview_screener", "pip_name": "tradingview-screener"},
     {"import_name": "tvDatafeed", "pip_name": "git+https://github.com/rongardF/tvdatafeed.git", "pip_display": "tvdatafeed (from GitHub)"},
-    {"import_name": "finnhub", "pip_name": "finnhub-python"},
     {"import_name": "backtesting", "pip_name": "backtesting"},
     {"import_name": "smartmoneyconcepts", "pip_name": "smartmoneyconcepts", "extra_flags": ["--no-deps"]},
     {"import_name": "pandas", "pip_name": "pandas"},
     {"import_name": "numpy", "pip_name": "numpy"},
 ]
+
+
+class SafeJSONEncoder(json.JSONEncoder):
+    """JSON encoder that handles special types."""
+    def default(self, obj):
+        try:
+            import numpy as np
+            if isinstance(obj, (np.integer,)):
+                return int(obj)
+            if isinstance(obj, (np.floating,)):
+                return float(obj)
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+        except ImportError:
+            pass
+        if hasattr(obj, 'isoformat'):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 def check_and_install(pkg):

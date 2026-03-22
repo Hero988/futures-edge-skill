@@ -1,47 +1,17 @@
 #!/usr/bin/env python3
 """
-economic_calendar.py - Fetch economic calendar events via Finnhub.
-Args: --date (YYYY-MM-DD or 'today'), --api-key (or env FINNHUB_API_KEY or diary config).
-Filters for US events, sorts by impact. Flags events within 30 minutes of current time.
+economic_calendar.py - Fetch economic calendar events via TradingView.
+Args: --date (YYYY-MM-DD or 'today'), --country (default US), --importance (default '2,3').
+Filters by country and importance. Flags events within 30 minutes of current time.
 Outputs JSON to stdout.
 """
 
 import argparse
 import json
-import os
 import sys
-from datetime import datetime, timedelta
-from pathlib import Path
-
-
-def find_api_key(provided_key=None):
-    """Resolve Finnhub API key from args, env, or diary config."""
-    # 1. Provided via argument
-    if provided_key:
-        return provided_key
-
-    # 2. Environment variable
-    env_key = os.environ.get("FINNHUB_API_KEY")
-    if env_key:
-        return env_key
-
-    # 3. Diary config file
-    config_paths = [
-        Path(__file__).resolve().parent.parent / "diary" / "config.json",
-    ]
-
-    for config_path in config_paths:
-        try:
-            if config_path.exists():
-                with open(config_path, "r") as f:
-                    config = json.load(f)
-                key = config.get("finnhub_api_key") or config.get("finnhub_key")
-                if key:
-                    return key
-        except (json.JSONDecodeError, OSError):
-            continue
-
-    return None
+import urllib.request
+import urllib.parse
+from datetime import datetime, timedelta, timezone
 
 
 def parse_date(date_str):
@@ -55,49 +25,89 @@ def parse_date(date_str):
         return None
 
 
-def is_within_minutes(event_time_str, minutes=30):
+def is_within_minutes(event_datetime_str, minutes=30):
     """Check if an event time is within `minutes` of current time."""
     now = datetime.now()
     try:
-        # Try various time formats
-        for fmt in ["%H:%M:%S", "%H:%M", "%Y-%m-%d %H:%M:%S"]:
+        # TradingView returns ISO format dates like "2026-03-22T08:30:00-04:00"
+        # or "2026-03-22T13:30:00+00:00"
+        for fmt in ["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
             try:
-                if "T" in str(event_time_str) or "-" in str(event_time_str):
-                    event_dt = datetime.fromisoformat(str(event_time_str).replace("Z", ""))
-                else:
-                    event_time = datetime.strptime(str(event_time_str), fmt)
-                    event_dt = now.replace(
-                        hour=event_time.hour,
-                        minute=event_time.minute,
-                        second=event_time.second if hasattr(event_time, "second") else 0,
-                    )
+                event_dt = datetime.strptime(str(event_datetime_str), fmt)
+                # If timezone-aware, convert to local naive for comparison
+                if event_dt.tzinfo is not None:
+                    event_dt = event_dt.replace(tzinfo=None) - event_dt.utcoffset() + (now - datetime.utcnow())
                 diff = abs((event_dt - now).total_seconds())
                 return diff <= minutes * 60
             except (ValueError, TypeError):
                 continue
+        # Fallback: try fromisoformat
+        event_dt = datetime.fromisoformat(str(event_datetime_str).replace("Z", "+00:00"))
+        event_dt = event_dt.replace(tzinfo=None)
+        diff = abs((event_dt - datetime.utcnow()).total_seconds())
+        return diff <= minutes * 60
     except Exception:
         pass
     return False
 
 
+def fetch_tradingview_calendar(date_str, country="US", importance="2,3"):
+    """Fetch economic calendar from TradingView's endpoint."""
+    # Compute date range as unix timestamps
+    target_date = datetime.strptime(date_str, "%Y-%m-%d")
+    from_ts = int(target_date.replace(hour=0, minute=0, second=0).timestamp())
+    to_ts = int(target_date.replace(hour=23, minute=59, second=59).timestamp())
+
+    url = "https://economic-calendar.tradingview.com/events"
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://www.tradingview.com",
+        "Referer": "https://www.tradingview.com/",
+    }
+
+    body = urllib.parse.urlencode({
+        "from": from_ts,
+        "to": to_ts,
+        "countries": country,
+        "importance": importance,
+    })
+
+    req = urllib.request.Request(url, data=body.encode("utf-8"), headers=headers, method="POST")
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data, None
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            return None, (
+                "TradingView economic calendar returned 403 Forbidden. "
+                "The endpoint may be temporarily blocked or require browser access. "
+                "Check https://www.tradingview.com/economic-calendar/ manually for today's events."
+            )
+        return None, f"HTTP error {e.code}: {e.reason}"
+    except urllib.error.URLError as e:
+        return None, f"Connection error: {e.reason}"
+    except Exception as e:
+        return None, f"Request error: {str(e)}"
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Fetch economic calendar from Finnhub")
+    parser = argparse.ArgumentParser(description="Fetch economic calendar from TradingView")
     parser.add_argument(
         "--date",
         default="today",
         help="Date to query (YYYY-MM-DD or 'today', default: today)",
     )
-    parser.add_argument("--api-key", default=None, help="Finnhub API key")
     parser.add_argument(
         "--country",
         default="US",
         help="Country filter (default: US)",
     )
     parser.add_argument(
-        "--days-ahead",
-        type=int,
-        default=0,
-        help="Additional days to include (default: 0)",
+        "--importance",
+        default="2,3",
+        help="Importance filter: comma-separated 0-3 (default: '2,3' for medium+high)",
     )
     args = parser.parse_args()
 
@@ -120,83 +130,66 @@ def main():
 
     output["date"] = date_str
 
-    # Find API key
-    api_key = find_api_key(args.api_key)
-    if not api_key:
-        output["error"] = (
-            "No Finnhub API key found. Provide via --api-key, "
-            "FINNHUB_API_KEY env variable, or diary/config.json. "
-            "Get a free key at https://finnhub.io"
-        )
+    # Fetch calendar from TradingView
+    raw_events, fetch_error = fetch_tradingview_calendar(
+        date_str, country=args.country, importance=args.importance
+    )
+
+    if fetch_error:
+        output["error"] = fetch_error
         print(json.dumps(output, indent=2))
         return
 
-    # Compute date range
-    from_date = date_str
-    if args.days_ahead > 0:
-        end_dt = datetime.strptime(date_str, "%Y-%m-%d") + timedelta(days=args.days_ahead)
-        to_date = end_dt.strftime("%Y-%m-%d")
-    else:
-        to_date = date_str
+    # TradingView returns {"status": "ok", "result": [...]} or a list directly
+    if isinstance(raw_events, dict):
+        raw_events = raw_events.get("result", raw_events.get("data", []))
+    if not raw_events or not isinstance(raw_events, list):
+        output["error"] = "No calendar data returned from TradingView. Check https://www.tradingview.com/economic-calendar/ manually."
+        print(json.dumps(output, indent=2))
+        return
 
-    # Fetch calendar
-    try:
-        import finnhub
+    # Filter by country (TradingView uses 2-letter codes)
+    country_upper = args.country.upper()
+    raw_events = [e for e in raw_events if e.get("country", "").upper() == country_upper]
+    if not raw_events:
+        output["error"] = f"No {args.country} events found for {date_str}. Check https://www.tradingview.com/economic-calendar/ manually."
+        output["note"] = "TradingView economic calendar may have limited data for some dates."
+        print(json.dumps(output, indent=2))
+        return
 
-        client = finnhub.Client(api_key=api_key)
-        calendar = client.calendar_economic(_from=from_date, to=to_date)
+    # Format events
+    importance_names = {0: "holiday", 1: "low", 2: "medium", 3: "high"}
+    events = []
 
-        if not calendar or "economicCalendar" not in calendar:
-            output["error"] = "No calendar data returned from Finnhub."
-            print(json.dumps(output, indent=2))
-            return
+    for event in raw_events:
+        # TradingView fields: title, country, indicator, importance, actual, forecast, previous, date, time, etc.
+        imp_num = event.get("importance", 0)
+        if imp_num is None:
+            imp_num = 0
 
-        raw_events = calendar.get("economicCalendar", [])
+        # Build event time string from the date field
+        event_time = event.get("date", "") or event.get("time", "")
 
-        # Filter by country
-        filtered = []
-        for event in raw_events:
-            country = event.get("country", "")
-            if args.country.upper() == "ALL" or country.upper() == args.country.upper():
-                filtered.append(event)
+        formatted = {
+            "time": event_time,
+            "title": event.get("title", "") or event.get("indicator", "Unknown"),
+            "importance": importance_names.get(imp_num, "unknown"),
+            "importance_level": imp_num,
+            "actual": event.get("actual"),
+            "forecast": event.get("forecast"),
+            "previous": event.get("previous"),
+            "country": event.get("country", ""),
+            "upcoming_30min": is_within_minutes(event_time, 30),
+        }
+        events.append(formatted)
 
-        # Format events
-        impact_names = {1: "low", 2: "medium", 3: "high"}
-        events = []
-        for event in filtered:
-            impact_num = event.get("impact", 0)
-            formatted = {
-                "time": event.get("time", ""),
-                "event": event.get("event", "Unknown"),
-                "impact": impact_names.get(impact_num, "unknown"),
-                "impact_level": impact_num,
-                "actual": event.get("actual"),
-                "estimate": event.get("estimate"),
-                "prev": event.get("prev"),
-                "unit": event.get("unit", ""),
-                "country": event.get("country", ""),
-                "upcoming_30min": is_within_minutes(event.get("time", ""), 30),
-            }
-            events.append(formatted)
+    # Sort by importance (high first), then time
+    events.sort(key=lambda x: (-x["importance_level"], x["time"]))
 
-        # Sort by impact (high first), then time
-        events.sort(key=lambda x: (-x["impact_level"], x["time"]))
-
-        output["events"] = events
-        output["total_events"] = len(events)
-        output["high_impact_events"] = [e for e in events if e["impact_level"] >= 3]
-        output["upcoming_30min"] = [e for e in events if e["upcoming_30min"]]
-
-    except ImportError:
-        output["error"] = "finnhub-python not installed. Run install_deps.py first."
-    except Exception as e:
-        error_msg = str(e)
-        if "401" in error_msg or "Unauthorized" in error_msg:
-            output["error"] = "Finnhub API key is invalid or expired. Check your key at https://finnhub.io"
-        elif "429" in error_msg:
-            output["error"] = "Finnhub rate limit exceeded. Wait a moment and try again."
-        else:
-            output["error"] = f"Finnhub error: {error_msg}"
+    output["events"] = events
+    output["total_events"] = len(events)
+    output["high_impact_events"] = [e for e in events if e["importance_level"] >= 3]
+    output["upcoming_30min"] = [e for e in events if e["upcoming_30min"]]
 
     print(json.dumps(output, indent=2))
 

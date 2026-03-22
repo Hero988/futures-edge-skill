@@ -24,7 +24,7 @@ If it does NOT exist:
    - Max trades per day (recommend 3-5)
    - Primary instruments (ES, NQ, YM, RTY, CL, GC)
    - Timezone (for session time calculations)
-   - Finnhub API key (free at finnhub.io — needed for economic calendar)
+   - TradingView username and password (free account at tradingview.com — unlocks more historical data for backtesting)
 2. Run: `python "${CLAUDE_SKILL_DIR}/scripts/install_deps.py"`
 3. Save config to `${CLAUDE_SKILL_DIR}/diary/config.json`
 4. Create initial diary structure files (lessons/patterns.md, lessons/mistakes.md, lessons/rules-evolution.md)

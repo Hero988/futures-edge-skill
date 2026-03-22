@@ -51,9 +51,8 @@ CME_POINT_VALUES = {
 }
 
 REQUIRED_LIBRARIES = [
-    {"import_name": "tradingview_ta", "pip_name": "tradingview-ta", "smoke_test": "version"},
+    {"import_name": "tradingview_screener", "pip_name": "tradingview-screener", "smoke_test": "scanner"},
     {"import_name": "tvDatafeed", "pip_name": "tvDatafeed", "smoke_test": "import"},
-    {"import_name": "finnhub", "pip_name": "finnhub-python", "smoke_test": "version"},
     {"import_name": "backtesting", "pip_name": "backtesting", "smoke_test": "import"},
     {"import_name": "smartmoneyconcepts", "pip_name": "smartmoneyconcepts", "smoke_test": "import"},
     {"import_name": "pandas", "pip_name": "pandas", "smoke_test": "version"},
@@ -260,6 +259,15 @@ def check_libraries():
                 lib_report["smoke_test"] = "passed" if version else "no_version"
             elif lib["smoke_test"] == "import":
                 lib_report["smoke_test"] = "passed"
+            elif lib["smoke_test"] == "scanner":
+                # tradingview-screener smoke test: try a simple scanner query for ES1!
+                try:
+                    from tradingview_screener import Query
+                    # Just verify Query class is importable and constructible
+                    q = Query()
+                    lib_report["smoke_test"] = "passed"
+                except Exception as e:
+                    lib_report["smoke_test"] = f"scanner_error: {e}"
 
         except ImportError as e:
             lib_report["error"] = f"Not installed: {e}"

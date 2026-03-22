@@ -16,6 +16,36 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import math
 
+
+class SafeJSONEncoder(json.JSONEncoder):
+    """JSON encoder that handles pandas Timestamps, numpy types, etc."""
+    def default(self, obj):
+        try:
+            import numpy as np
+            if isinstance(obj, (np.integer,)):
+                return int(obj)
+            if isinstance(obj, (np.floating,)):
+                return float(obj)
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            if isinstance(obj, np.bool_):
+                return bool(obj)
+        except ImportError:
+            pass
+        try:
+            import pandas as pd
+            if isinstance(obj, pd.Timestamp):
+                return obj.isoformat()
+        except ImportError:
+            pass
+        if isinstance(obj, (datetime,)):
+            return obj.isoformat()
+        if hasattr(obj, 'isoformat'):
+            return obj.isoformat()
+        if math.isnan(obj) if isinstance(obj, float) else False:
+            return None
+        return super().default(obj)
+
 # ---------------------------------------------------------------------------
 # Helper: safe import wrappers
 # ---------------------------------------------------------------------------
@@ -54,6 +84,33 @@ def safe_import_smc():
             return None
 
 # ---------------------------------------------------------------------------
+# Config / credentials
+# ---------------------------------------------------------------------------
+
+def load_tv_credentials(config_path=None):
+    """Load TradingView credentials from config.json."""
+    paths_to_try = []
+    if config_path:
+        paths_to_try.append(Path(config_path))
+    # Default: ../diary/config.json relative to this script
+    paths_to_try.append(Path(__file__).resolve().parent.parent / "diary" / "config.json")
+
+    for p in paths_to_try:
+        try:
+            if p.exists():
+                with open(p, "r") as f:
+                    config = json.load(f)
+                username = config.get("tradingview_username")
+                password = config.get("tradingview_password")
+                if username and password:
+                    return username, password
+        except (json.JSONDecodeError, OSError):
+            continue
+
+    return None, None
+
+
+# ---------------------------------------------------------------------------
 # Data retrieval
 # ---------------------------------------------------------------------------
 
@@ -67,7 +124,7 @@ INTERVAL_MAP = {
     "1w": "in_weekly",
 }
 
-def fetch_data(symbol, exchange, timeframe, start_date=None, end_date=None, n_bars=5000):
+def fetch_data(symbol, exchange, timeframe, start_date=None, end_date=None, n_bars=5000, config_path=None):
     """Fetch OHLCV data via tvDatafeed. Pull multiple chunks if needed."""
     TvDatafeed, Interval = safe_import_tvdatafeed()
     pd, np = safe_import_pandas()
@@ -85,8 +142,39 @@ def fetch_data(symbol, exchange, timeframe, start_date=None, end_date=None, n_ba
     if tv_interval is None:
         return None, f"Interval attribute '{attr_name}' not found in tvDatafeed.Interval"
 
+    import time as _time
+
+    # Exchange mapping for futures (tvDatafeed needs the correct exchange)
+    EXCHANGE_MAP = {
+        "ES1!": "CME_MINI", "MES1!": "CME_MINI",
+        "NQ1!": "CME_MINI", "MNQ1!": "CME_MINI",
+        "YM1!": "CBOT_MINI", "MYM1!": "CBOT_MINI",
+        "RTY1!": "CME_MINI", "M2K1!": "CME_MINI",
+        "CL1!": "NYMEX", "MCL1!": "NYMEX",
+        "GC1!": "COMEX", "MGC1!": "COMEX",
+    }
+    effective_exchange = EXCHANGE_MAP.get(symbol, exchange)
+
+    # Load TradingView credentials from config
+    tv_username, tv_password = load_tv_credentials(config_path)
+
     try:
-        tv = TvDatafeed()
+        # Retry logic: tvDatafeed websocket can fail on first attempt
+        tv = None
+        for _attempt in range(3):
+            try:
+                if tv_username and tv_password:
+                    tv = TvDatafeed(username=tv_username, password=tv_password)
+                else:
+                    tv = TvDatafeed()
+                _time.sleep(2)  # Let websocket stabilize
+                break
+            except Exception:
+                _time.sleep(3)
+
+        if tv is None:
+            return None, "Failed to connect to TvDatafeed after 3 attempts."
+
         # Fetch data in chunks if needed (tvDatafeed max ~5000 bars per call)
         max_per_call = 5000
         all_data = []
@@ -94,12 +182,18 @@ def fetch_data(symbol, exchange, timeframe, start_date=None, end_date=None, n_ba
 
         while remaining > 0:
             batch = min(remaining, max_per_call)
-            df = tv.get_hist(
-                symbol=symbol,
-                exchange=exchange,
-                interval=tv_interval,
-                n_bars=batch,
-            )
+            df = None
+            for _retry in range(3):
+                df = tv.get_hist(
+                    symbol=symbol,
+                    exchange=effective_exchange,
+                    interval=tv_interval,
+                    n_bars=batch,
+                )
+                if df is not None and not df.empty:
+                    break
+                _time.sleep(3)
+
             if df is None or df.empty:
                 break
             all_data.append(df)
@@ -108,7 +202,7 @@ def fetch_data(symbol, exchange, timeframe, start_date=None, end_date=None, n_ba
                 break  # No more data available
 
         if not all_data:
-            return None, "No data returned from tvDatafeed."
+            return None, "No data returned from tvDatafeed after retries."
 
         combined = pd.concat(all_data).drop_duplicates().sort_index()
 
@@ -325,15 +419,18 @@ def build_strategy_class(config, data, BacktestStrategy):
 
             # Pre-compute SMC signals if needed
             if setup_type in ICT_SETUPS:
-                full_df = pd.DataFrame({
-                    "Open": data["Open"].values,
-                    "High": data["High"].values,
-                    "Low": data["Low"].values,
-                    "Close": data["Close"].values,
-                })
-                smc_signals, smc_err = detect_smc_signals(full_df, setup_type)
-                self.smc_signal = self.I(lambda: smc_signals.values)
-                self._smc_error = smc_err
+                def compute_smc(close_arr, high_arr, low_arr, open_arr):
+                    """Compute SMC signals matching current data slice length."""
+                    df = pd.DataFrame({
+                        "Open": open_arr,
+                        "High": high_arr,
+                        "Low": low_arr,
+                        "Close": close_arr,
+                    })
+                    signals, _ = detect_smc_signals(df, setup_type)
+                    return signals.values
+                self.smc_signal = self.I(compute_smc, self.data.Close, self.data.High, self.data.Low, self.data.Open)
+                self._smc_error = None
             else:
                 self.smc_signal = None
                 self._smc_error = None
@@ -720,6 +817,7 @@ def main():
     parser.add_argument("--prop-firm", default=None, help="Prop firm name for simulation")
     parser.add_argument("--account-size", type=float, default=50000, help="Account size (default: 50000)")
     parser.add_argument("--output-report", default=None, help="Path to save markdown report (optional)")
+    parser.add_argument("--config-path", default=None, help="Path to config.json for TradingView credentials (optional)")
     args = parser.parse_args()
 
     output = {
@@ -743,17 +841,17 @@ def main():
         config_path = Path(args.config)
         if not config_path.exists():
             output["error"] = f"Config file not found: {args.config}"
-            print(json.dumps(output, indent=2))
+            print(json.dumps(output, indent=2, cls=SafeJSONEncoder))
             return
         with open(config_path, "r") as f:
             config = json.load(f)
     except json.JSONDecodeError as e:
         output["error"] = f"Invalid JSON in config file: {e}"
-        print(json.dumps(output, indent=2))
+        print(json.dumps(output, indent=2, cls=SafeJSONEncoder))
         return
     except Exception as e:
         output["error"] = f"Error reading config: {e}"
-        print(json.dumps(output, indent=2))
+        print(json.dumps(output, indent=2, cls=SafeJSONEncoder))
         return
 
     output["strategy"] = {
@@ -766,13 +864,13 @@ def main():
     pd, np = safe_import_pandas()
     if pd is None:
         output["error"] = "pandas/numpy not installed. Run install_deps.py first."
-        print(json.dumps(output, indent=2))
+        print(json.dumps(output, indent=2, cls=SafeJSONEncoder))
         return
 
     BacktestClass, StrategyBase = safe_import_backtesting()
     if BacktestClass is None:
         output["error"] = "backtesting library not installed. Run install_deps.py first."
-        print(json.dumps(output, indent=2))
+        print(json.dumps(output, indent=2, cls=SafeJSONEncoder))
         return
 
     # Fetch data
@@ -783,10 +881,10 @@ def main():
     start_date = data_range.get("start")
     end_date = data_range.get("end")
 
-    data, fetch_err = fetch_data(instrument, exchange, timeframe, start_date, end_date)
+    data, fetch_err = fetch_data(instrument, exchange, timeframe, start_date, end_date, config_path=args.config_path)
     if fetch_err:
         output["error"] = fetch_err
-        print(json.dumps(output, indent=2))
+        print(json.dumps(output, indent=2, cls=SafeJSONEncoder))
         return
 
     output["data_info"] = {
@@ -800,7 +898,11 @@ def main():
 
     # Build strategy
     StrategyClass = build_strategy_class(config, data, StrategyBase)
-    cash = args.account_size
+    # For futures: use large cash to avoid margin issues in backtesting.py
+    # backtesting.py treats prices as stock prices; futures use margin (~5-10% of notional)
+    # We use $1M cash and scale results back to the actual account size
+    max_price = float(data["Close"].max()) if len(data) > 0 else 50000
+    cash = max(args.account_size, int(max_price * 10))  # Ensure at least 10x the price
     commission = config.get("commission", 0.002)
 
     # --- Full backtest ---
@@ -811,7 +913,7 @@ def main():
         trade_returns = extract_trade_returns(stats)
     except Exception as e:
         output["error"] = f"Backtest execution error: {e}"
-        print(json.dumps(output, indent=2))
+        print(json.dumps(output, indent=2, cls=SafeJSONEncoder))
         return
 
     # --- In-sample / Out-of-sample split ---
@@ -1001,7 +1103,7 @@ def main():
         except Exception as e:
             output["report_save_error"] = str(e)
 
-    print(json.dumps(output, indent=2))
+    print(json.dumps(output, indent=2, cls=SafeJSONEncoder))
 
 
 def generate_markdown_report(output, config):
