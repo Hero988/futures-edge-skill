@@ -215,13 +215,29 @@ On weekends, show the weekend checklist instead:
 - Post-session: after 9:45 PM London
 ```
 
-Adjust times based on the user's timezone from config.json. For London (Europe/London):
-- US pre-market: 1:00 PM London
-- US market open: 2:30 PM London
-- CL peak volume: 2:00-3:30 PM London (9:00-10:30 AM ET)
-- CL inventory report (Wednesday): 3:30 PM London (10:30 AM ET)
-- Lucid close deadline (4:45 PM ET): 9:45 PM London
-- US market close (4:00 PM ET): 9:00 PM London
+Adjust times based on the user's timezone from config.json. IMPORTANT: Do NOT hardcode ET-to-London offsets. The offset changes during the ~3-week DST gap (US springs forward in early March, UK springs forward in late March; US falls back in early November, UK falls back in late October). Always compute the offset dynamically:
+
+```bash
+python -c "
+from datetime import datetime
+import zoneinfo
+now = datetime.now(zoneinfo.ZoneInfo('America/New_York'))
+london = now.astimezone(zoneinfo.ZoneInfo('Europe/London'))
+offset_hours = (london.utcoffset().total_seconds() - now.utcoffset().total_seconds()) / 3600
+print(f'ET_TO_LONDON_OFFSET={int(offset_hours)}h')
+# Key times in London:
+times_et = {'CL_RTH_open': '09:00', 'CL_peak_end': '10:30', 'US_market_open': '09:30', 'EIA_Wednesday': '10:30', 'US_close': '16:00', 'Lucid_close': '16:45'}
+for name, t in times_et.items():
+    h, m = map(int, t.split(':'))
+    london_h = h + int(offset_hours)
+    print(f'{name}: {t} ET = {london_h}:{m:02d} London')
+"
+```
+
+Use the output of this script for all time references. Typical offsets:
+- Normal (both on standard or both on summer): 5 hours (e.g., 9:00 AM ET = 2:00 PM London)
+- DST gap (US on EDT, UK still on GMT — early-to-late March): 4 hours (e.g., 9:00 AM ET = 1:00 PM London)
+- DST gap (US back on EST, UK still on BST — late Oct to early Nov): 4 hours
 
 ## Mode Detection Decision Tree
 
@@ -244,21 +260,31 @@ Evaluate the user's message and route to the correct workflow:
 
 This runs every 15 minutes via `/loop`. It does EVERYTHING automatically — the user just watches and approves/rejects trade plans.
 
+**Sound Notifications:** The autopilot plays sounds so the user doesn't need to watch the terminal. Sound script: `${CLAUDE_SKILL_DIR}/scripts/notify_sound.py`
+- `--event trade_signal` → 3x chime (TRADE DETECTED — look at screen)
+- `--event t1_hit` → 2x tada (TARGET HIT — action needed)
+- `--event close_warning` → 2x warning (CLOSE DEADLINE — act now)
+- `--event kill_switch` → 3x critical (KILL SWITCH — stop trading)
+- `--event action_needed` → 2x notification (generic — user input needed)
+- `--event scan_quiet` → no sound (routine scan, no signal)
+
+Run sounds using `start` for non-blocking: `start python "${CLAUDE_SKILL_DIR}/scripts/notify_sound.py" --event {event}`
+
 **Every 15 minutes, execute this sequence:**
 
 1. Get current time: `python -c "from datetime import datetime; print(datetime.now().strftime('%H:%M %A'))"`
 
 2. **Close deadline check:**
-   - Calculate time remaining until 9:45 PM London (4:45 PM ET)
-   - If < 30 min remaining → "CLOSE WARNING: {minutes} minutes until Lucid close deadline. Close all positions."
+   - Calculate time remaining until close deadline (use dynamic timezone offset)
+   - If < 30 min remaining → Play sound: `start python "${CLAUDE_SKILL_DIR}/scripts/notify_sound.py" --event close_warning` then "CLOSE WARNING: {minutes} minutes until Lucid close deadline. Close all positions."
    - If past deadline → print ONLY this one short line and stop immediately (minimal tokens):
      `⏹ Session closed. Run /futures-edge next when ready.`
    - Do NOT scan, do NOT run any scripts, do NOT print anything else. Just that one line. This keeps the loop alive but near-zero cost (~50 tokens).
 
 3. **Kill switch check:**
    - Read today's trade logs from `${CLAUDE_SKILL_DIR}/diary/{today}/trades/`
-   - If 3+ consecutive losses → "KILL SWITCH ACTIVE. No more trades today."
-   - If daily loss >= 2% → "DAILY LOSS LIMIT. No more trades today."
+   - If 3+ consecutive losses → Play `start python "${CLAUDE_SKILL_DIR}/scripts/notify_sound.py" --event kill_switch` then "KILL SWITCH ACTIVE. No more trades today."
+   - If daily loss >= 2% → Play kill_switch sound then "DAILY LOSS LIMIT. No more trades today."
    - If kill switch active, stop here — just report status.
 
 4. **Market scan:**
@@ -278,42 +304,122 @@ This runs every 15 minutes via `/loop`. It does EVERYTHING automatically — the
    - Calculate stop (1x ATR from current price) and targets (1R, 2R)
    - Run prop firm compliance check
 
-7. **Present the trade plan:**
+7. **Present the trade plan with TradingView execution steps:**
    ```
-   SIGNAL DETECTED: {LONG/SHORT} CL at ${price}
+   SIGNAL DETECTED: {LONG/SHORT} MCL at ${price}
 
    Confluence Score: {X}/6
-   - Session bias alignment: {+1 or +0}
-   - Key level: {+1 or +0}
-   - Multi-timeframe: {+1 or +0}
-   - Indicator confirmation: {+1 or +0}
-   - R:R >= 2:1: {+1 or +0}
-   - No news within 30min: {+1 or +0}
+   {✓ or ✗} Session bias alignment: {detail}
+   {✓ or ✗} Key level: {detail}
+   {✓ or ✗} Multi-timeframe: {detail}
+   {✓ or ✗} Indicator confirmation: {detail}
+   {✓ or ✗} R:R >= 2:1: {detail}
+   {✓ or ✗} No news within 30min: {detail}
 
    Decision: {TAKE IT / CONDITIONAL / PASS}
+   Prop firm: {compliant / warning with detail}
 
-   Trade Plan:
-   - Entry: ${price} | Stop: ${stop} ({ticks} ticks, ${risk}/contract)
-   - Contracts: {N} MCL | Risk: ${total_risk}
-   - T1 (1R): ${t1} — take 50% off | T2 (2R): ${t2} — take 25% off
-   - Prop firm: {compliant/warning}
+   ══════════════════════════════════════
+     TRADINGVIEW — PLACE THIS ORDER NOW:
+   ══════════════════════════════════════
 
-   ⚠ WAITING FOR YOUR APPROVAL. Reply "take it" to enter, or wait for next scan in 15 min.
+     1. Open order panel on your MCL chart
+     2. Select: Market
+     3. Quantity dropdown → Risk, USD → type: ${risk_amount}
+     4. Exits:
+        Stop Loss    → ON → ${stop_price}  ({stop_ticks} ticks)
+        Take Profit  → ON → ${t1_price}    ({tp1_ticks} ticks)
+     5. Click {BUY / SELL}
+
+     TradingView auto-calculates: ~{N} MCL contracts
+     Tick value: $1.00 | Risk: {pct}% / ${risk_amount}
+
+   ══════════════════════════════════════
+
+     AFTER YOU ENTER — I handle the rest:
+     • T1 (${t1_price}): I'll tell you exactly when + how to close 50%
+     • Then move stop to breakeven (${entry_price})
+     • T2 (${t2_price}): I'll tell you when to close remaining
+
+   ══════════════════════════════════════
+
+   Reply "taken" when placed, or "pass" to skip.
    ```
 
-8. **If no signal:** Report concise status:
+   **SOUND:** When presenting a TAKE IT or CONDITIONAL trade plan, ALWAYS play the trade signal sound BEFORE showing the plan:
+   `start python "${CLAUDE_SKILL_DIR}/scripts/notify_sound.py" --event trade_signal`
+   Do NOT play sound for PASS decisions (no action needed from user).
+
+   NOTE: Always calculate risk_amount from config (account_size × risk_per_trade_pct). Show the exact dollar amount the user should type into TradingView's Risk, USD field. TradingView auto-calculates the correct number of contracts based on this risk and the stop distance. Also verify the calculated contracts don't exceed Lucid's max (20 MCL). If they would, reduce risk_amount and note: "Risk reduced to ${X} to stay within 20 MCL contract limit."
+
+8. **If open position — manage exits via TradingView instructions:**
+   On each scan, check current price against the open trade's SL/TP levels.
+
+   **If T1 level reached or exceeded:**
+   Play sound FIRST: `start python "${CLAUDE_SKILL_DIR}/scripts/notify_sound.py" --event t1_hit`
+   ```
+   ══════════════════════════════════════
+     T1 HIT — DO THIS ON TRADINGVIEW:
+   ══════════════════════════════════════
+
+     1. Right-click your position on chart → Close position
+     2. Check "Partial close" in the popup
+     3. Set quantity: {N} contracts (50% of position)
+     4. Confirm close
+     5. Drag your Stop Loss line to ${entry_price} (breakeven)
+     6. New target: ${t2_price} (T2)
+
+     Closed P&L: +${closed_pnl}
+     Remaining: {N} contracts, risk = $0 (stop at breakeven)
+
+   ══════════════════════════════════════
+   ```
+   NOTE: "Partial close" requires Settings → Trading → "Instant order placement" to be OFF. Remind user once if they haven't used it before.
+
+   **If T2 level reached:**
+   Play sound FIRST: `start python "${CLAUDE_SKILL_DIR}/scripts/notify_sound.py" --event t1_hit`
+   ```
+   ══════════════════════════════════════
+     T2 HIT — CLOSE REMAINING POSITION:
+   ══════════════════════════════════════
+
+     1. Click the X on your position → Close
+     2. Close all remaining contracts
+
+     Total trade P&L: +${total_pnl} ({R}R)
+     Trade logged to diary.
+
+   ══════════════════════════════════════
+   ```
+
+   **If stop loss hit:**
+   ```
+   STOP LOSS HIT at ${stop_price}
+   P&L: -${loss} ({R}R) | Consecutive losses: {N}
+   Trade logged to diary.
+   {If N >= 3: "KILL SWITCH ACTIVE — no more trades today."}
+   ```
+
+   **If position open but no level hit — update price and status:**
+   ```
+   POSITION OPEN — MCL {LONG/SHORT} from ${entry}
+   Current: ${price} | P&L: {+/-}${unrealized} | SL: ${stop} | TP: ${tp}
+   ```
+
+9. **If no signal and no open position:** Report concise status:
    ```
    AUTOPILOT SCAN — {time}
-   CL: ${price} | EMA9: {val} EMA21: {val} | RSI: {val} | No crossover
+   MCL: ${price} | EMA9: {val} EMA21: {val} | RSI: {val} | No crossover
    Close deadline: {hours}h {min}m remaining
    Trades today: {N} | Daily P&L: ${pnl}
    ```
 
 **The user's only job during autopilot:**
-- Say "take it" or "yes" to approve a trade plan
+- Say "taken" when they've placed an order I recommended
+- Follow the TradingView steps when I say to close 50% or close all
 - Say "done trading" to end the session and trigger post-session review
 - Say "pass" or just wait 15 min if they don't like the setup
-- The loop handles everything else automatically
+- The loop handles scanning, analysis, compliance, logging, and exit management automatically
 
 ## Pre-Market Workflow
 
@@ -369,24 +475,45 @@ Follow this checklist for EVERY trade evaluation.
    - Score >= 4 → **TAKE IT** — proceed to position sizing
    - Score = 3 → **CONDITIONAL** — explain what's missing, let user decide
    - Score < 3 → **PASS** — explain why, suggest waiting for better setup
-4. Position Sizing (read `${CLAUDE_SKILL_DIR}/references/contract-specs.md` for tick values):
+4. Position Sizing — use TradingView's "Risk, USD" mode:
    ```
-   Risk $ = Account_Size × Risk_Pct
-   Stop_Distance_$ = Stop_Ticks × Tick_Value
-   Max_Contracts = floor(Risk_$ / Stop_Distance_$)
-   Apply prop firm scaling limit if applicable
+   Risk $ = Account_Size × Risk_Pct (from config.json)
+   Stop_Ticks = stop distance in ticks (from ATR or structure)
+   TradingView auto-calculates contracts from Risk USD + Stop distance
+   Verify: contracts = floor(Risk_$ / (Stop_Ticks × Tick_Value))
+   Cap at prop firm max (20 MCL for Lucid)
    ```
-5. Define the full trade plan:
-   - Entry price, Stop loss price, reason for stop placement
-   - Target 1 (1R): take 50% off, move stop to breakeven
-   - Target 2 (2R): take 25% off
-   - Runner: trail remaining 25% behind structure
+5. Present the trade plan with exact TradingView steps:
+   ```
+   ══════════════════════════════════════
+     TRADINGVIEW — PLACE THIS ORDER NOW:
+   ══════════════════════════════════════
+
+     1. Open order panel on your MCL chart
+     2. Select: {Market / Limit}
+     3. Quantity dropdown → Risk, USD → type: ${risk_amount}
+     4. Exits:
+        Stop Loss    → ON → ${stop_price}  ({stop_ticks} ticks)
+        Take Profit  → ON → ${t1_price}    ({tp1_ticks} ticks)
+     5. Click {BUY / SELL}
+
+     TradingView auto-calculates: ~{N} MCL contracts
+     Tick value: $1.00 | Risk: {pct}% / ${risk_amount}
+
+   ══════════════════════════════════════
+
+     AFTER YOU ENTER — exit management:
+     • T1 (${t1_price}): Partial close 50% → move stop to breakeven
+     • T2 (${t2_price}): Close remaining
+   ```
+   Include the stop placement reasoning (e.g., "below demand zone" or "1x ATR").
 6. Create trade log: `${CLAUDE_SKILL_DIR}/diary/{today}/trades/trade-{NNN}.md` using the template from `${CLAUDE_SKILL_DIR}/references/diary-templates.md`
-7. After trade closes — user reports result. Update the trade log with:
+7. Monitor trade via autopilot or user reports. When trade closes (SL hit, TP hit, or user reports exit), update the trade log with:
    - Actual exit price, P&L in $ and R-multiple
    - Execution quality grade (A/B/C/D)
    - Emotional state during trade
    - Whether plan was followed
+   - If autopilot is running, it auto-detects SL/TP hits by checking price each scan
 8. Re-run prop firm check with updated P&L
 
 ## Post-Session Workflow
