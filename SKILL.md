@@ -287,15 +287,24 @@ Run sounds using `start` for non-blocking: `start python "${CLAUDE_SKILL_DIR}/sc
    - If daily loss >= 2% → Play kill_switch sound then "DAILY LOSS LIMIT. No more trades today."
    - If kill switch active, stop here — just report status.
 
-4. **Market scan:**
-   - Run: `python "${CLAUDE_SKILL_DIR}/scripts/market_scan.py" --symbols CL1! --intervals 15m 1h`
-   - Extract: current CL price, EMA10 (≈EMA9), EMA20 (≈EMA21), RSI, ATR, VWAP, recommendation
+4. **Market scan (use autopilot_scan.py — NOT market_scan.py):**
+   - Run: `python "${CLAUDE_SKILL_DIR}/scripts/autopilot_scan.py" --symbol CL1! --bars 60`
+   - This script does TWO things: gets 15m bars from tvDatafeed AND cross-checks the current price against the TradingView Scanner API (real-time)
+   - Extract from output: `price`, `EMA9`, `EMA21`, `ema_gap_pct`, `crossover`, `RSI`, `ATR`, `VWAP`, `data_quality`, `divergence`
+   - **IMPORTANT**: Check `data_quality` field:
+     - `"GOOD"` → both sources agree, data is reliable
+     - `"DEGRADED"` → sources diverge > $0.20, Scanner API price used (check `errors` for details)
+     - `"FAILED"` → no data available, skip this scan
+   - Do NOT use `market_scan.py` for autopilot — it returns null for intraday futures intervals
+   - Do NOT write inline Python to calculate EMAs/RSI — `autopilot_scan.py` handles all of this
 
-5. **EMA crossover detection:**
-   - From the 15m scan: check if EMA10 and EMA20 have crossed
-   - **LONG signal**: EMA10 > EMA20 AND recommendation is BUY or STRONG_BUY
-   - **SHORT signal**: EMA10 < EMA20 AND recommendation is SELL or STRONG_SELL
-   - **NO signal**: EMA10 ≈ EMA20 (within 0.1%) or NEUTRAL → report "No crossover. EMA10={val} EMA20={val}. Waiting."
+5. **EMA crossover detection (read from autopilot_scan.py output):**
+   - Check the `crossover` field: `"bullish"`, `"bearish"`, or `"none"`
+   - Check `ema_gap_pct`: must be > 0.1% for a confirmed signal
+   - Check `crossover_bars_ago`: how many bars since the cross (1 = just happened, 8 = established trend)
+   - **LONG signal**: `crossover == "bullish"` AND `ema_gap_pct > 0.1`
+   - **SHORT signal**: `crossover == "bearish"` AND `ema_gap_pct > 0.1`
+   - **NO signal**: `crossover == "none"` OR `ema_gap_pct <= 0.1` → report "No crossover. EMA9={val} EMA21={val}. Waiting."
 
 6. **If signal detected → auto-evaluate the trade:**
    - Load today's premarket.md for bias and levels
@@ -662,8 +671,11 @@ When explaining, relate to the user's own diary data when available.
 # Dependencies (first run)
 python "${CLAUDE_SKILL_DIR}/scripts/install_deps.py"
 
-# Market Analysis
-python "${CLAUDE_SKILL_DIR}/scripts/market_scan.py" --symbols ES1! NQ1! --exchange CME --intervals 1h 4h 1d
+# Autopilot Scan (USE THIS for autopilot — combines bars + real-time price cross-check)
+python "${CLAUDE_SKILL_DIR}/scripts/autopilot_scan.py" --symbol CL1! --bars 60
+
+# Market Analysis (for pre-market and broader context — NOT for autopilot intraday)
+python "${CLAUDE_SKILL_DIR}/scripts/market_scan.py" --symbols ES1! NQ1! --exchange CME --intervals 1d
 python "${CLAUDE_SKILL_DIR}/scripts/historical_data.py" --symbol ES1! --bars 500
 python "${CLAUDE_SKILL_DIR}/scripts/economic_calendar.py" --date today
 
